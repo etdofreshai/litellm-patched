@@ -99,6 +99,60 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
             request["instructions"] = base_instructions
         request["store"] = False
         request["stream"] = True
+
+        # Map Anthropic-style effort hints to OpenAI Responses reasoning.effort.
+        # Sources we accept: response_api_optional_request_params['output_config'],
+        # request['output_config'], request['thinking'], or top-level
+        # 'reasoning_effort' / 'effort' fields.
+        _effort_map = {
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "xhigh",
+            "minimal": "minimal",
+        }
+        _src_effort = None
+        for _bag in (response_api_optional_request_params, request):
+            if not isinstance(_bag, dict):
+                continue
+            _oc = _bag.get("output_config")
+            if isinstance(_oc, dict) and isinstance(_oc.get("effort"), str):
+                _src_effort = _oc["effort"]
+                break
+            for _k in ("reasoning_effort", "effort"):
+                if isinstance(_bag.get(_k), str):
+                    _src_effort = _bag[_k]
+                    break
+            if _src_effort:
+                break
+            _th = _bag.get("thinking")
+            if isinstance(_th, dict):
+                _t = _th.get("type")
+                if _t == "adaptive":
+                    _src_effort = "medium"
+                    break
+                if _t == "enabled":
+                    # legacy budget-token form: bucket by budget
+                    _b = _th.get("budget_tokens") or 0
+                    if isinstance(_b, (int, float)):
+                        if _b >= 16000:
+                            _src_effort = "high"
+                        elif _b >= 4000:
+                            _src_effort = "medium"
+                        elif _b > 0:
+                            _src_effort = "low"
+                        if _src_effort:
+                            break
+        if _src_effort is not None:
+            mapped = _effort_map.get(_src_effort.lower(), "medium")
+            existing = request.get("reasoning")
+            if isinstance(existing, dict):
+                existing = dict(existing)
+                existing["effort"] = mapped
+                request["reasoning"] = existing
+            else:
+                request["reasoning"] = {"effort": mapped, "summary": "auto"}
         include = list(request.get("include") or [])
         if "reasoning.encrypted_content" not in include:
             include.append("reasoning.encrypted_content")
