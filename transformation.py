@@ -75,11 +75,26 @@ class ChatGPTResponsesAPIConfig(OpenAIResponsesAPIConfig):
         )
         base_instructions = get_chatgpt_default_instructions()
         existing_instructions = request.get("instructions")
+        # Anthropic-style system arrays arrive as list[dict] with text blocks;
+        # flatten to a single string so the codex backend (which expects
+        # str-typed instructions) and our concat below both work.
+        if isinstance(existing_instructions, list):
+            parts = []
+            for blk in existing_instructions:
+                if isinstance(blk, dict):
+                    txt = blk.get("text") or blk.get("content")
+                    if isinstance(txt, str):
+                        parts.append(txt)
+                elif isinstance(blk, str):
+                    parts.append(blk)
+            existing_instructions = "\n\n".join(parts) if parts else None
         if existing_instructions:
             if base_instructions not in existing_instructions:
                 request["instructions"] = (
                     f"{base_instructions}\n\n{existing_instructions}"
                 )
+            else:
+                request["instructions"] = existing_instructions
         else:
             request["instructions"] = base_instructions
         request["store"] = False
